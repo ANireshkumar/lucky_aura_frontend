@@ -1,6 +1,5 @@
 import axios from 'axios'
 
-// AFTER
 const api = axios.create({
   baseURL: import.meta.env.VITE_API_URL || '/api',
 })
@@ -31,7 +30,9 @@ export const authAPI = {
   login: (data) => api.post('/auth/login', data),
   getMe: () => api.get('/auth/me'),
   updateProfile: (data) => api.put('/auth/profile', data),
-  googleLogin: () => { window.location.href = '/api/auth/google' },
+  googleLogin: () => {
+    window.location.href = 'https://lucky-aura-backend.onrender.com/api/auth/google'
+  },
 }
 
 // ── Products ──────────────────────────────────────────
