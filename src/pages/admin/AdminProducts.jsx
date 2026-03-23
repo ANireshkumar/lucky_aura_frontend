@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react'
+import React, { useState, useEffect, useRef, useCallback } from 'react'
 import { productAPI } from '../../services/api'
 import { useToast } from '../../context/ToastContext'
 
@@ -11,6 +11,25 @@ const emptyForm = {
   ingredients: '', benefits: '', howToUse: '',
 }
 
+// Separate stable input component to prevent re-render focus loss
+const FormInput = ({ label, name, value, onChange, type = 'text', placeholder = '', required = false }) => (
+  <div>
+    <label className="block text-sm font-medium text-gray-700 mb-1.5">
+      {label} {required && <span className="text-red-500">*</span>}
+    </label>
+    <input
+      type={type}
+      name={name}
+      defaultValue={value}
+      onBlur={onChange}
+      onChange={onChange}
+      placeholder={placeholder}
+      required={required}
+      className="w-full rounded-lg border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent bg-white"
+    />
+  </div>
+)
+
 const AdminProducts = () => {
   const [products, setProducts] = useState([])
   const [total, setTotal] = useState(0)
@@ -19,13 +38,16 @@ const AdminProducts = () => {
   const [search, setSearch] = useState('')
   const [loading, setLoading] = useState(true)
   const [modalOpen, setModalOpen] = useState(false)
-  const [editing, setEditing] = useState(null) // product being edited
-  const [form, setForm] = useState(emptyForm)
+  const [editing, setEditing] = useState(null)
+  const [saving, setSaving] = useState(false)
   const [imageFiles, setImageFiles] = useState([])
   const [imagePreviews, setImagePreviews] = useState([])
-  const [saving, setSaving] = useState(false)
   const fileRef = useRef()
   const { showToast } = useToast()
+
+  // Use refs for form values to avoid re-render on every keystroke
+  const formRef = useRef({ ...emptyForm })
+  const [formKey, setFormKey] = useState(0) // used to reset form
 
   const fetchProducts = async () => {
     setLoading(true)
@@ -34,7 +56,7 @@ const AdminProducts = () => {
       setProducts(res.data.products)
       setTotal(res.data.total)
       setPages(res.data.pages)
-    } catch (err) { showToast('Failed to load products', 'error') }
+    } catch { showToast('Failed to load products', 'error') }
     finally { setLoading(false) }
   }
 
@@ -42,31 +64,38 @@ const AdminProducts = () => {
 
   const openCreate = () => {
     setEditing(null)
-    setForm(emptyForm)
+    formRef.current = { ...emptyForm }
     setImageFiles([])
     setImagePreviews([])
+    setFormKey(k => k + 1)
     setModalOpen(true)
   }
 
   const openEdit = (product) => {
     setEditing(product)
-    setForm({
-      name: product.name,
-      description: product.description,
-      price: product.price,
+    formRef.current = {
+      name: product.name || '',
+      description: product.description || '',
+      price: product.price || '',
       mrp: product.mrp || '',
-      category: product.category,
+      category: product.category || 'FaceWash',
       badge: product.badge || '',
-      stock: product.stock,
-      isFeatured: product.isFeatured,
-      isActive: product.isActive,
+      stock: product.stock || '100',
+      isFeatured: product.isFeatured || false,
+      isActive: product.isActive !== undefined ? product.isActive : true,
       ingredients: (product.ingredients || []).join(', '),
       benefits: (product.benefits || []).join(', '),
       howToUse: product.howToUse || '',
-    })
+    }
     setImageFiles([])
     setImagePreviews(product.images?.map(i => i.url) || [])
+    setFormKey(k => k + 1)
     setModalOpen(true)
+  }
+
+  const handleFieldChange = (e) => {
+    const { name, value, type, checked } = e.target
+    formRef.current[name] = type === 'checkbox' ? checked : value
   }
 
   const handleImageChange = (e) => {
@@ -79,9 +108,16 @@ const AdminProducts = () => {
     e.preventDefault()
     setSaving(true)
     try {
+      const form = formRef.current
       const fd = new FormData()
-      const fields = ['name', 'description', 'price', 'mrp', 'category', 'badge', 'stock', 'howToUse']
-      fields.forEach(k => fd.append(k, form[k]))
+      fd.append('name', form.name)
+      fd.append('description', form.description)
+      fd.append('price', form.price)
+      fd.append('mrp', form.mrp)
+      fd.append('category', form.category)
+      fd.append('badge', form.badge)
+      fd.append('stock', form.stock)
+      fd.append('howToUse', form.howToUse)
       fd.append('isFeatured', form.isFeatured)
       fd.append('isActive', form.isActive)
       fd.append('ingredients', JSON.stringify(form.ingredients.split(',').map(s => s.trim()).filter(Boolean)))
@@ -113,14 +149,7 @@ const AdminProducts = () => {
     } catch { showToast('Failed to delete product', 'error') }
   }
 
-  const Field = ({ label, children }) => (
-    <div>
-      <label className="block text-xs font-medium text-gray-600 mb-1">{label}</label>
-      {children}
-    </div>
-  )
-
-  const inputCls = "w-full rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400"
+  const inputCls = "w-full rounded-lg border border-gray-200 px-4 py-2.5 text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 focus:border-transparent bg-white"
 
   return (
     <div className="animate-fade-up space-y-6">
@@ -136,9 +165,12 @@ const AdminProducts = () => {
 
       {/* Search */}
       <div className="relative max-w-sm">
-        <input value={search} onChange={e => { setSearch(e.target.value); setPage(1) }}
+        <input
+          value={search}
+          onChange={e => { setSearch(e.target.value); setPage(1) }}
           placeholder="Search products…"
-          className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-white" />
+          className="w-full pl-9 pr-4 py-2.5 border border-gray-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-emerald-400 bg-white"
+        />
         <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
           <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
         </svg>
@@ -198,94 +230,135 @@ const AdminProducts = () => {
       {/* Pagination */}
       {pages > 1 && (
         <div className="flex items-center justify-center gap-3">
-          <button disabled={page === 1} onClick={() => setPage(p => p - 1)}
-            className="px-4 py-2 rounded-xl border text-sm font-medium disabled:opacity-40 hover:bg-gray-50 transition-colors">← Prev</button>
+          <button disabled={page === 1} onClick={() => setPage(p => p - 1)} className="px-4 py-2 rounded-xl border text-sm font-medium disabled:opacity-40 hover:bg-gray-50">← Prev</button>
           <span className="text-sm text-gray-500">Page {page} of {pages}</span>
-          <button disabled={page === pages} onClick={() => setPage(p => p + 1)}
-            className="px-4 py-2 rounded-xl border text-sm font-medium disabled:opacity-40 hover:bg-gray-50 transition-colors">Next →</button>
+          <button disabled={page === pages} onClick={() => setPage(p => p + 1)} className="px-4 py-2 rounded-xl border text-sm font-medium disabled:opacity-40 hover:bg-gray-50">Next →</button>
         </div>
       )}
 
       {/* Modal */}
       {modalOpen && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/40 backdrop-blur-sm overflow-y-auto py-8 px-4">
-          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-2xl">
-            <div className="flex items-center justify-between px-7 py-5 border-b border-gray-100">
-              <h2 className="font-display text-xl text-gray-900">{editing ? 'Edit Product' : 'Add New Product'}</h2>
-              <button onClick={() => setModalOpen(false)} className="text-gray-400 hover:text-gray-600 text-xl">✕</button>
+        <div className="fixed inset-0 z-50 flex items-start justify-center bg-black/50 backdrop-blur-sm overflow-y-auto py-6 px-4">
+          <div className="bg-white rounded-3xl shadow-2xl w-full max-w-3xl my-auto">
+            {/* Header */}
+            <div className="flex items-center justify-between px-8 py-5 border-b border-gray-100">
+              <h2 className="font-display text-2xl text-gray-900">{editing ? 'Edit Product' : 'Add New Product'}</h2>
+              <button onClick={() => setModalOpen(false)} className="w-8 h-8 flex items-center justify-center rounded-full hover:bg-gray-100 text-gray-400 hover:text-gray-600 transition-colors text-lg">✕</button>
             </div>
 
-            <form onSubmit={handleSave} className="p-7 grid grid-cols-1 sm:grid-cols-2 gap-5">
-              <Field label="Product Name *">
-                <input required value={form.name} onChange={e => setForm(p => ({ ...p, name: e.target.value }))} className={inputCls} placeholder="e.g. Kumkumadi Face Wash" />
-              </Field>
-              <Field label="Category *">
-                <select required value={form.category} onChange={e => setForm(p => ({ ...p, category: e.target.value }))} className={inputCls}>
-                  {CATEGORIES.map(c => <option key={c}>{c}</option>)}
-                </select>
-              </Field>
-              <div className="sm:col-span-2">
-                <Field label="Description *">
-                  <textarea required rows={3} value={form.description} onChange={e => setForm(p => ({ ...p, description: e.target.value }))} className={inputCls + ' resize-none'} placeholder="Describe the product…" />
-                </Field>
-              </div>
-              <Field label="Price (₹) *">
-                <input required type="number" min="0" value={form.price} onChange={e => setForm(p => ({ ...p, price: e.target.value }))} className={inputCls} />
-              </Field>
-              <Field label="MRP (₹) — optional">
-                <input type="number" min="0" value={form.mrp} onChange={e => setForm(p => ({ ...p, mrp: e.target.value }))} className={inputCls} />
-              </Field>
-              <Field label="Stock">
-                <input type="number" min="0" value={form.stock} onChange={e => setForm(p => ({ ...p, stock: e.target.value }))} className={inputCls} />
-              </Field>
-              <Field label="Badge">
-                <select value={form.badge} onChange={e => setForm(p => ({ ...p, badge: e.target.value }))} className={inputCls}>
-                  {BADGES.map(b => <option key={b} value={b}>{b || 'None'}</option>)}
-                </select>
-              </Field>
-              <Field label="Ingredients (comma-separated)">
-                <input value={form.ingredients} onChange={e => setForm(p => ({ ...p, ingredients: e.target.value }))} className={inputCls} placeholder="Aloe vera, Neem, Turmeric" />
-              </Field>
-              <Field label="Benefits (comma-separated)">
-                <input value={form.benefits} onChange={e => setForm(p => ({ ...p, benefits: e.target.value }))} className={inputCls} placeholder="Brightening, Anti-aging" />
-              </Field>
-              <div className="sm:col-span-2">
-                <Field label="How to Use">
-                  <textarea rows={2} value={form.howToUse} onChange={e => setForm(p => ({ ...p, howToUse: e.target.value }))} className={inputCls + ' resize-none'} placeholder="Apply on face and rinse…" />
-                </Field>
+            <form key={formKey} onSubmit={handleSave} className="px-8 py-6 space-y-5">
+
+              {/* Row 1 */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Product Name <span className="text-red-500">*</span></label>
+                  <input required type="text" name="name" defaultValue={formRef.current.name} onChange={handleFieldChange}
+                    placeholder="e.g. Kumkumadi Face Wash" className={inputCls} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Category <span className="text-red-500">*</span></label>
+                  <select required name="category" defaultValue={formRef.current.category} onChange={handleFieldChange} className={inputCls}>
+                    {CATEGORIES.map(c => <option key={c} value={c}>{c}</option>)}
+                  </select>
+                </div>
               </div>
 
-              {/* Toggles */}
-              <div className="flex items-center gap-6">
-                {[['isFeatured', 'Featured'], ['isActive', 'Active / Visible']].map(([key, label]) => (
-                  <label key={key} className="flex items-center gap-2 cursor-pointer">
-                    <input type="checkbox" checked={form[key]} onChange={e => setForm(p => ({ ...p, [key]: e.target.checked }))}
-                      className="w-4 h-4 accent-emerald-600 rounded" />
-                    <span className="text-sm text-gray-600">{label}</span>
-                  </label>
-                ))}
+              {/* Description */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">Description <span className="text-red-500">*</span></label>
+                <textarea required name="description" rows={4} defaultValue={formRef.current.description} onChange={handleFieldChange}
+                  placeholder="Describe the product, its benefits and usage…"
+                  className={inputCls + ' resize-none'} />
+              </div>
+
+              {/* Row 2 - Price */}
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Price (₹) <span className="text-red-500">*</span></label>
+                  <input required type="number" min="0" name="price" defaultValue={formRef.current.price} onChange={handleFieldChange} placeholder="299" className={inputCls} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">MRP (₹) <span className="text-gray-400 text-xs">optional</span></label>
+                  <input type="number" min="0" name="mrp" defaultValue={formRef.current.mrp} onChange={handleFieldChange} placeholder="399" className={inputCls} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Stock</label>
+                  <input type="number" min="0" name="stock" defaultValue={formRef.current.stock} onChange={handleFieldChange} placeholder="100" className={inputCls} />
+                </div>
+              </div>
+
+              {/* Row 3 - Badge */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Badge</label>
+                  <select name="badge" defaultValue={formRef.current.badge} onChange={handleFieldChange} className={inputCls}>
+                    {BADGES.map(b => <option key={b} value={b}>{b || 'None'}</option>)}
+                  </select>
+                </div>
+                <div className="flex items-end gap-6 pb-1">
+                  {[['isFeatured', 'Featured on Homepage'], ['isActive', 'Active / Visible']].map(([key, label]) => (
+                    <label key={key} className="flex items-center gap-2 cursor-pointer">
+                      <input type="checkbox" name={key} defaultChecked={formRef.current[key]} onChange={handleFieldChange}
+                        className="w-4 h-4 accent-emerald-600 rounded" />
+                      <span className="text-sm text-gray-600">{label}</span>
+                    </label>
+                  ))}
+                </div>
+              </div>
+
+              {/* Ingredients & Benefits */}
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Ingredients <span className="text-gray-400 text-xs">comma separated</span></label>
+                  <input type="text" name="ingredients" defaultValue={formRef.current.ingredients} onChange={handleFieldChange}
+                    placeholder="Aloe Vera, Neem, Turmeric" className={inputCls} />
+                </div>
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-1.5">Benefits <span className="text-gray-400 text-xs">comma separated</span></label>
+                  <input type="text" name="benefits" defaultValue={formRef.current.benefits} onChange={handleFieldChange}
+                    placeholder="Brightening, Moisturizing" className={inputCls} />
+                </div>
+              </div>
+
+              {/* How to Use */}
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1.5">How to Use</label>
+                <textarea name="howToUse" rows={3} defaultValue={formRef.current.howToUse} onChange={handleFieldChange}
+                  placeholder="Apply a small amount on cleansed face and massage gently…"
+                  className={inputCls + ' resize-none'} />
               </div>
 
               {/* Images */}
-              <div className="sm:col-span-2">
-                <Field label="Product Images (up to 5)">
-                  <div className="flex flex-wrap gap-3 mb-3">
-                    {imagePreviews.map((src, i) => (
-                      <img key={i} src={src} alt="" className="w-20 h-20 object-cover rounded-xl border border-gray-100" />
-                    ))}
-                    <button type="button" onClick={() => fileRef.current?.click()}
-                      className="w-20 h-20 rounded-xl border-2 border-dashed border-gray-200 hover:border-emerald-400 flex items-center justify-center text-gray-400 hover:text-emerald-600 text-2xl transition-colors">
-                      +
-                    </button>
-                  </div>
-                  <input ref={fileRef} type="file" multiple accept="image/*" className="hidden" onChange={handleImageChange} />
-                  <p className="text-xs text-gray-400">{editing ? 'Upload new images to replace existing ones.' : 'Required for new products.'}</p>
-                </Field>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-2">
+                  Product Images <span className="text-gray-400 text-xs">(up to 5 images)</span>
+                </label>
+                <div className="flex flex-wrap gap-3 mb-3">
+                  {imagePreviews.map((src, i) => (
+                    <div key={i} className="relative">
+                      <img src={src} alt="" className="w-24 h-24 object-cover rounded-xl border border-gray-100" />
+                    </div>
+                  ))}
+                  <button type="button" onClick={() => fileRef.current?.click()}
+                    className="w-24 h-24 rounded-xl border-2 border-dashed border-gray-200 hover:border-emerald-400 flex flex-col items-center justify-center text-gray-400 hover:text-emerald-600 transition-colors gap-1">
+                    <span className="text-2xl leading-none">+</span>
+                    <span className="text-xs">Add Image</span>
+                  </button>
+                </div>
+                <input ref={fileRef} type="file" multiple accept="image/*" className="hidden" onChange={handleImageChange} />
+                {editing && imagePreviews.length > 0 && (
+                  <p className="text-xs text-gray-400">Upload new images to replace existing ones.</p>
+                )}
               </div>
 
-              <div className="sm:col-span-2 flex justify-end gap-3 pt-2 border-t border-gray-100">
-                <button type="button" onClick={() => setModalOpen(false)} className="px-5 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors">Cancel</button>
-                <button type="submit" disabled={saving} className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-semibold px-6 py-2.5 rounded-xl text-sm transition-colors">
+              {/* Footer */}
+              <div className="flex justify-end gap-3 pt-4 border-t border-gray-100">
+                <button type="button" onClick={() => setModalOpen(false)}
+                  className="px-6 py-2.5 rounded-xl border border-gray-200 text-sm font-medium text-gray-600 hover:bg-gray-50 transition-colors">
+                  Cancel
+                </button>
+                <button type="submit" disabled={saving}
+                  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-60 text-white font-semibold px-8 py-2.5 rounded-xl text-sm transition-colors">
                   {saving ? 'Saving…' : editing ? 'Update Product' : 'Create Product'}
                 </button>
               </div>
